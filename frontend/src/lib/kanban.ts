@@ -11,11 +11,35 @@ export type Column = {
 };
 
 export type BoardData = {
+  title: string;
   columns: Column[];
   cards: Record<string, Card>;
 };
 
+export type ApiColumn = {
+  id: string;
+  title: string;
+  position: number;
+  cardIds: string[];
+};
+
+export type ApiCard = {
+  id: string;
+  title: string;
+  details: string;
+  position: number;
+  columnId: string;
+};
+
+export type ApiBoard = {
+  id: string;
+  title: string;
+  columns: ApiColumn[];
+  cards: Record<string, ApiCard>;
+};
+
 export const initialData: BoardData = {
+  title: "Kanban Studio",
   columns: [
     { id: "col-backlog", title: "Backlog", cardIds: ["card-1", "card-2"] },
     { id: "col-discovery", title: "Discovery", cardIds: ["card-3"] },
@@ -69,6 +93,40 @@ export const initialData: BoardData = {
       details: "Document release notes and share internally.",
     },
   },
+};
+
+export const mapBoardResponse = (board: ApiBoard): BoardData => {
+  const cards: Record<string, Card> = {};
+  Object.values(board.cards).forEach((card) => {
+    cards[card.id] = {
+      id: card.id,
+      title: card.title,
+      details: card.details,
+    };
+  });
+
+  return {
+    title: board.title,
+    columns: board.columns.map((column) => ({
+      id: column.id,
+      title: column.title,
+      cardIds: [...column.cardIds],
+    })),
+    cards,
+  };
+};
+
+export const findCardLocation = (
+  columns: Column[],
+  cardId: string
+): { columnId: string; position: number } | null => {
+  for (const column of columns) {
+    const position = column.cardIds.indexOf(cardId);
+    if (position !== -1) {
+      return { columnId: column.id, position };
+    }
+  }
+  return null;
 };
 
 const isColumnId = (columns: Column[], id: string) =>

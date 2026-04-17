@@ -1,0 +1,60 @@
+{
+  "tables": [
+    {
+      "name": "users",
+      "description": "Account holders (future multi-user).",
+      "columns": [
+        {"name": "id", "type": "TEXT", "primary_key": true},
+        {"name": "username", "type": "TEXT", "unique": true, "nullable": false},
+        {"name": "password_hash", "type": "TEXT", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": false},
+        {"name": "updated_at", "type": "TEXT", "nullable": false}
+      ]
+    },
+    {
+      "name": "boards",
+      "description": "One board per user for MVP.",
+      "columns": [
+        {"name": "id", "type": "TEXT", "primary_key": true},
+        {"name": "user_id", "type": "TEXT", "nullable": false, "references": "users.id"},
+        {"name": "title", "type": "TEXT", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": false},
+        {"name": "updated_at", "type": "TEXT", "nullable": false}
+      ],
+      "indexes": [
+        {"columns": ["user_id"], "unique": true}
+      ]
+    },
+    {
+      "name": "columns",
+      "description": "Board columns with a fixed order that can be renamed.",
+      "columns": [
+        {"name": "id", "type": "TEXT", "primary_key": true},
+        {"name": "board_id", "type": "TEXT", "nullable": false, "references": "boards.id"},
+        {"name": "title", "type": "TEXT", "nullable": false},
+        {"name": "position", "type": "INTEGER", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": false},
+        {"name": "updated_at", "type": "TEXT", "nullable": false}
+      ],
+      "indexes": [
+        {"columns": ["board_id", "position"], "unique": true}
+      ]
+    },
+    {
+      "name": "cards",
+      "description": "Cards that live in a column and have an order within that column.",
+      "columns": [
+        {"name": "id", "type": "TEXT", "primary_key": true},
+        {"name": "column_id", "type": "TEXT", "nullable": false, "references": "columns.id"},
+        {"name": "title", "type": "TEXT", "nullable": false},
+        {"name": "details", "type": "TEXT", "nullable": false},
+        {"name": "position", "type": "INTEGER", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": false},
+        {"name": "updated_at", "type": "TEXT", "nullable": false}
+      ],
+      "indexes": [
+        {"columns": ["column_id", "position"], "unique": true}
+      ]
+    }
+  ]
+}
