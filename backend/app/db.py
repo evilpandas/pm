@@ -8,8 +8,9 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DEFAULT_USERNAME = "user"
-DEFAULT_USER_ID = "user-1"
+DEFAULT_USERNAME = os.getenv("PM_USERNAME", "jared")
+DEFAULT_USER_ID = f"{DEFAULT_USERNAME}-1"
+DEFAULT_PASSWORD = os.getenv("PM_PASSWORD", "demo")
 DEFAULT_BOARD_TITLE = "Kanban Studio"
 
 DEFAULT_COLUMNS = [
@@ -159,7 +160,7 @@ def ensure_user_and_board(connection: sqlite3.Connection) -> str:
             INSERT INTO users (id, username, password_hash, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (DEFAULT_USER_ID, DEFAULT_USERNAME, "demo", now, now),
+            (DEFAULT_USER_ID, DEFAULT_USERNAME, DEFAULT_PASSWORD, now, now),
         )
         user_id = DEFAULT_USER_ID
     else:

@@ -36,6 +36,12 @@ const setupFetchMock = () => {
   const board = buildApiBoard();
   global.fetch = vi.fn(async (input) => {
     const requestUrl = typeof input === "string" ? input : input.url;
+    if (requestUrl.endsWith("/api/login")) {
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (requestUrl.endsWith("/api/board")) {
       return new Response(JSON.stringify(board), {
         status: 200,
@@ -64,8 +70,22 @@ describe("Home login flow", () => {
   it("shows an error on invalid credentials", async () => {
     setupFetchMock();
     render(<Home />);
-    await userEvent.type(screen.getByPlaceholderText("user"), "wrong");
-    await userEvent.type(screen.getByPlaceholderText("password"), "nope");
+    global.fetch = vi.fn(async (input) => {
+      const requestUrl = typeof input === "string" ? input : input.url;
+      if (requestUrl.endsWith("/api/login")) {
+        return new Response(JSON.stringify({ detail: "Invalid credentials" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    await userEvent.type(screen.getByPlaceholderText("username"), "wrong");
+    await userEvent.type(screen.getByPlaceholderText("passphrase"), "nope");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
     expect(screen.getByText(/invalid credentials/i)).toBeInTheDocument();
   });
@@ -73,8 +93,8 @@ describe("Home login flow", () => {
   it("allows login and logout", async () => {
     setupFetchMock();
     render(<Home />);
-    await userEvent.type(screen.getByPlaceholderText("user"), "user");
-    await userEvent.type(screen.getByPlaceholderText("password"), "password");
+    await userEvent.type(screen.getByPlaceholderText("username"), "jared");
+    await userEvent.type(screen.getByPlaceholderText("passphrase"), "test-passphrase");
     await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
     const columns = await screen.findAllByTestId(/column-/i);

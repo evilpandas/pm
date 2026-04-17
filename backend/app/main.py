@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import json
+import os
 from pathlib import Path
 from typing import Annotated, Literal
 import uuid
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -53,6 +54,15 @@ class CardUpdate(BaseModel):
 
 class BoardUpdate(BaseModel):
   title: str
+
+
+class LoginRequest(BaseModel):
+  username: str
+  password: str
+
+
+class LoginResponse(BaseModel):
+  status: str
 
 
 class ChatMessage(BaseModel):
@@ -341,6 +351,12 @@ def build_chat_messages(payload: ChatRequest, board: BoardResponse) -> list[dict
   ]
 
 
+def get_login_credentials() -> tuple[str, str]:
+  username = os.getenv("PM_USERNAME", "jared")
+  password = os.getenv("PM_PASSWORD", "password")
+  return username, password
+
+
 def apply_operations(connection, board_id: str, operations: list[ChatOperation]) -> None:
   if not operations:
     return
@@ -584,6 +600,19 @@ def build_board(connection, board_id: str) -> BoardResponse:
 @app.get("/api/health")
 def read_health() -> dict[str, str]:
   return {"status": "ok"}
+
+
+@app.post("/api/login", response_model=LoginResponse)
+def login(payload: LoginRequest) -> LoginResponse:
+  expected_username, expected_password = get_login_credentials()
+  if payload.username == expected_username and payload.password == expected_password:
+    return LoginResponse(status="ok")
+  raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.get("/up", response_class=PlainTextResponse)
+def read_up() -> str:
+  return "ok"
 
 
 @app.get("/api/board", response_model=BoardResponse)

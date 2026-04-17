@@ -3,27 +3,33 @@
 import { useState, type FormEvent } from "react";
 import { KanbanBoard } from "@/components/KanbanBoard";
 
-const VALID_USERNAME = "user";
-const VALID_PASSWORD = "password";
-
 export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setError("");
 
-    if (username === VALID_USERNAME && password === VALID_PASSWORD) {
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Invalid credentials");
+      }
+
       setIsAuthenticated(true);
       setUsername("");
       setPassword("");
-      setError("");
-      return;
+    } catch (error) {
+      setError("Invalid credentials.");
     }
-
-    setError("Invalid credentials. Try user / password.");
   };
 
   if (!isAuthenticated) {
@@ -41,7 +47,7 @@ export default function Home() {
               Welcome back to Kanban Studio
             </h1>
             <p className="mt-3 text-sm leading-6 text-[var(--gray-text)]">
-              Use the demo credentials to enter the single-board workspace.
+              Sign in to access your single-board workspace.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-8 space-y-4">
@@ -52,7 +58,7 @@ export default function Home() {
                 <input
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  placeholder="user"
+                  placeholder="username"
                   className="w-full rounded-xl border border-[var(--stroke)] bg-white px-3 py-2 text-sm font-medium text-[var(--navy-dark)] outline-none transition focus:border-[var(--primary-blue)]"
                   required
                 />
@@ -65,7 +71,7 @@ export default function Home() {
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="password"
+                  placeholder="passphrase"
                   className="w-full rounded-xl border border-[var(--stroke)] bg-white px-3 py-2 text-sm font-medium text-[var(--navy-dark)] outline-none transition focus:border-[var(--primary-blue)]"
                   required
                 />
@@ -82,9 +88,6 @@ export default function Home() {
                 >
                   Sign in
                 </button>
-                <span className="text-xs uppercase tracking-[0.2em] text-[var(--gray-text)]">
-                  user / password
-                </span>
               </div>
             </form>
           </div>

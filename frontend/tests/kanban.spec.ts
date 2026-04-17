@@ -119,8 +119,8 @@ const mockApi = async (page: import("@playwright/test").Page) => {
 const login = async (page: import("@playwright/test").Page) => {
   await mockApi(page);
   await page.goto("/");
-  await page.getByPlaceholder("user").fill("user");
-  await page.getByPlaceholder("password").fill("password");
+  await page.getByPlaceholder("username").fill("jared");
+  await page.getByPlaceholder("passphrase").fill("test-passphrase");
   await page.getByRole("button", { name: /sign in/i }).click();
 };
 

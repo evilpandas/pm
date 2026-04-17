@@ -8,6 +8,8 @@ from app.main import app
 def client(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("PM_DB_PATH", str(db_path))
+    monkeypatch.setenv("PM_USERNAME", "jared")
+    monkeypatch.setenv("PM_PASSWORD", "test-passphrase")
     with TestClient(app) as test_client:
         yield test_client
 
@@ -19,6 +21,27 @@ def test_board_seeded_on_first_request(client):
     assert payload["title"] == "Kanban Studio"
     assert len(payload["columns"]) == 5
     assert len(payload["cards"]) == 8
+
+
+def test_up_route(client):
+    response = client.get("/up")
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_login_route(client):
+    response = client.post(
+        "/api/login",
+        json={"username": "jared", "password": "test-passphrase"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+    bad_response = client.post(
+        "/api/login",
+        json={"username": "jared", "password": "wrong"},
+    )
+    assert bad_response.status_code == 401
 
 
 def test_create_column(client):
