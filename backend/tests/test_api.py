@@ -26,7 +26,7 @@ def test_board_seeded_on_first_request(client):
 def test_up_route(client):
     response = client.get("/up")
     assert response.status_code == 200
-    assert response.text == "ok"
+    assert response.text == "OK"
 
 
 def test_login_route(client):

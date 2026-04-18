@@ -11,17 +11,13 @@ export default defineConfig({
     timeout: 10_000,
   },
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: "http://localhost:80",
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
-    cwd: frontendDir,
-    env: {
-      ...process.env,
-      NODE_PATH: path.join(frontendDir, "node_modules"),
-    },
-    url: "http://127.0.0.1:3000",
+    command: "docker compose up -d",
+    cwd: path.resolve(__dirname, ".."),
+    url: "http://localhost:80/up",
     reuseExistingServer: true,
     timeout: 120_000,
   },
