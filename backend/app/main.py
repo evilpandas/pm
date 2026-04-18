@@ -612,7 +612,7 @@ def login(payload: LoginRequest) -> LoginResponse:
 
 @app.get("/up", response_class=PlainTextResponse)
 def read_up() -> str:
-  return "ok"
+  return "OK"
 
 
 @app.get("/api/board", response_model=BoardResponse)

@@ -25,6 +25,6 @@ RUN uv pip install --system -r /tmp/requirements.txt
 COPY backend /app/backend
 COPY --from=frontend-build /frontend/out /app/backend/static
 
-EXPOSE 8000
+EXPOSE 80
 
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "80"]
