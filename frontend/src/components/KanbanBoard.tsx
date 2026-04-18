@@ -21,7 +21,11 @@ import {
   type BoardData,
 } from "@/lib/kanban";
 
-export const KanbanBoard = () => {
+type KanbanBoardProps = {
+  authToken: string;
+};
+
+export const KanbanBoard = ({ authToken }: KanbanBoardProps) => {
   const [board, setBoard] = useState<BoardData | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [modalCardId, setModalCardId] = useState<string | null>(null);
@@ -52,7 +56,11 @@ export const KanbanBoard = () => {
     }
     setErrorMessage("");
     try {
-      const response = await fetch("/api/board");
+      const response = await fetch("/api/board", {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
       if (!response.ok) {
         throw new Error("Failed to load board");
       }
@@ -69,7 +77,7 @@ export const KanbanBoard = () => {
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     loadBoard();
@@ -107,7 +115,10 @@ export const KanbanBoard = () => {
 
     fetch(`/api/cards/${active.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
       body: JSON.stringify({
         column_id: nextLocation.columnId,
         position: nextLocation.position,
@@ -138,7 +149,10 @@ export const KanbanBoard = () => {
     try {
       const response = await fetch(`/api/columns/${columnId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({ title }),
       });
       if (!response.ok) {
@@ -161,7 +175,10 @@ export const KanbanBoard = () => {
     try {
       const response = await fetch("/api/cards", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({ column_id: columnId, title, details }),
       });
 
@@ -236,7 +253,10 @@ export const KanbanBoard = () => {
     try {
       const response = await fetch(`/api/cards/${cardId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({ title, details }),
       });
 
@@ -291,6 +311,9 @@ export const KanbanBoard = () => {
     try {
       const response = await fetch(`/api/cards/${cardId}`, {
         method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
       });
       if (!response.ok) {
         setErrorMessage("Unable to delete the card.");
@@ -380,7 +403,10 @@ export const KanbanBoard = () => {
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           message: nextMessage,
           conversation: chatMessages,

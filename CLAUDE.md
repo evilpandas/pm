@@ -68,7 +68,11 @@ Backend runs on uvicorn serving FastAPI app at `backend.app.main:app`
 
 - `backend/app/main.py` - FastAPI app, all API routes, request/response models, operation handlers
 - `backend/app/db.py` - SQLite schema, connection management, seed data, user/board initialization
+- `backend/app/auth.py` - JWT authentication with HTTPBearer, token creation/validation
+- `backend/app/config.py` - Pydantic Settings for centralized configuration
 - `backend/app/openrouter.py` - OpenRouter API client for AI chat completions
+- `backend/app/errors.py` - Standardized error response format
+- `backend/app/logging_config.py` - Structured logging with request/response middleware
 
 **Key Backend Patterns:**
 - Database initialized on startup via FastAPI lifespan context manager
@@ -78,6 +82,10 @@ Backend runs on uvicorn serving FastAPI app at `backend.app.main:app`
 - Position-based ordering for columns and cards (integer `position` field)
 - Foreign keys with CASCADE delete enabled
 - `ensure_user_and_board()` creates user and board with seed data if missing
+- JWT authentication on all protected routes via `Depends(get_current_user)`
+- Password hashing with bcrypt before storage
+- Transaction management for multi-step database operations
+- CORS and security headers configured in middleware
 
 ### Frontend Structure
 
@@ -133,36 +141,105 @@ OpenRouter API (`openai/gpt-oss-120b` model) via `/api/chat` endpoint:
 Create `.env` file (see `.env.example`):
 ```
 OPENROUTER_API_KEY=       # Required for AI chat
-PM_USERNAME=jared          # Login username (default: jared)
-PM_PASSWORD=               # Login password (default: demo)
-PM_DB_PATH=                # Optional: custom database path
+JWT_SECRET_KEY=           # Required for authentication (generate with: openssl rand -hex 32)
+PM_USERNAME=jared         # Login username (default: jared)
+PM_PASSWORD=              # Login password (default: password)
+PM_DB_PATH=               # Optional: custom database path
 ```
+
+**Required Variables:**
+- `OPENROUTER_API_KEY` - OpenRouter API key for AI chat functionality
+- `JWT_SECRET_KEY` - Secret key for signing JWT tokens (must be strong random value)
+- `PM_PASSWORD` - User password (hashed with bcrypt before storage)
+
+**Optional Variables:**
+- `PM_USERNAME` - Defaults to "jared"
+- `PM_DB_PATH` - Defaults to `backend/data/pm.db`
+- `JWT_ALGORITHM` - Defaults to "HS256"
+- `JWT_EXPIRATION_MINUTES` - Defaults to 1440 (24 hours)
 
 ## API Endpoints
 
+**All endpoints except `/api/login`, `/api/health`, and `/up` require JWT authentication via `Authorization: Bearer <token>` header.**
+
 Authentication:
-- `POST /api/login` - Hardcoded username/password auth
+- `POST /api/login` - Login with username/password, returns JWT token
 
 Board:
-- `GET /api/board` - Get board with all columns and cards
-- `PATCH /api/board` - Update board title
+- `GET /api/board` - Get board with all columns and cards (requires auth)
+- `PATCH /api/board` - Update board title (requires auth)
 
 Columns:
-- `POST /api/columns` - Create column
-- `PATCH /api/columns/{id}` - Update column title/position
-- `DELETE /api/columns/{id}` - Delete column (cascades to cards)
+- `POST /api/columns` - Create column (requires auth)
+- `PATCH /api/columns/{id}` - Update column title/position (requires auth)
+- `DELETE /api/columns/{id}` - Delete column (cascades to cards) (requires auth)
 
 Cards:
-- `POST /api/cards` - Create card
-- `PATCH /api/cards/{id}` - Update card title/details/position/column
-- `DELETE /api/cards/{id}` - Delete card
+- `POST /api/cards` - Create card (requires auth)
+- `PATCH /api/cards/{id}` - Update card title/details/position/column (requires auth)
+- `DELETE /api/cards/{id}` - Delete card (requires auth)
 
 AI:
-- `POST /api/chat` - Send message, get AI reply + board operations
+- `POST /api/chat` - Send message, get AI reply + board operations (requires auth)
 
 Health:
-- `GET /api/health` - JSON status check
-- `GET /up` - Plain text "OK" (for container health checks)
+- `GET /api/health` - JSON status check (no auth required)
+- `GET /up` - Plain text "OK" (for container health checks) (no auth required)
+
+## Security
+
+**Authentication:**
+- JWT tokens with HTTPBearer scheme
+- Tokens expire after 24 hours (configurable)
+- Password hashing with bcrypt (12 rounds)
+- Passwords stored as bcrypt hashes in database
+- Token validation via `get_current_user()` dependency
+
+**Security Headers:**
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+- `X-XSS-Protection: 1; mode=block`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+
+**CORS:**
+- Configured for local development (http://localhost:3000)
+- Allows credentials, all methods, common headers
+
+**Input Validation:**
+- All request payloads validated with Pydantic models
+- Chat input sanitized (stripped and length-limited)
+
+**Docker Security:**
+- Runs as non-root user (appuser, uid 1001)
+- Minimal attack surface
+
+## Testing Patterns
+
+**Backend Tests:**
+- Use `TestClient` from FastAPI
+- Create fresh database for each test with `tmp_path` fixture
+- Set all required environment variables in test fixtures:
+  ```python
+  monkeypatch.setenv("PM_USERNAME", "jared")
+  monkeypatch.setenv("PM_PASSWORD", "test-password")
+  monkeypatch.setenv("JWT_SECRET_KEY", "test-jwt-secret")
+  reload_settings()  # Reload config after setting env vars
+  ```
+- Create auth headers with `create_access_token()`:
+  ```python
+  token = create_access_token({"sub": "jared"})
+  headers = {"Authorization": f"Bearer {token}"}
+  ```
+- Pass auth headers to all protected endpoints
+- Call `ensure_user_and_board()` indirectly via first API request
+
+**Frontend E2E Tests:**
+- Playwright tests against running Docker container
+- Login helper function for authentication
+- Use `data-testid` attributes for stable selectors
+- Use `.last()` when multiple elements may exist with same content
+- Playwright config uses `reuseExistingServer: true` to avoid rebuilding
 
 ## Color Scheme
 

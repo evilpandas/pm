@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bcrypt
 import os
 import sqlite3
 import uuid
@@ -8,10 +9,21 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-DEFAULT_USERNAME = os.getenv("PM_USERNAME", "jared")
-DEFAULT_USER_ID = f"{DEFAULT_USERNAME}-1"
-DEFAULT_PASSWORD = os.getenv("PM_PASSWORD", "demo")
 DEFAULT_BOARD_TITLE = "Kanban Studio"
+
+
+def get_default_username() -> str:
+    from .config import settings
+    return settings.pm_username
+
+
+def get_default_user_id() -> str:
+    return f"{get_default_username()}-1"
+
+
+def get_default_password() -> str:
+    from .config import settings
+    return settings.pm_password
 
 DEFAULT_COLUMNS = [
     {
@@ -78,6 +90,14 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+
+
 def get_db_path() -> Path:
     env_path = os.environ.get("PM_DB_PATH")
     if env_path:
@@ -91,6 +111,14 @@ def get_connection() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def get_db():
+    connection = get_connection()
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def init_db() -> None:
@@ -148,21 +176,24 @@ def init_db() -> None:
 
 
 def ensure_user_and_board(connection: sqlite3.Connection) -> str:
+    username = get_default_username()
     user_row = connection.execute(
         "SELECT id FROM users WHERE username = ?",
-        (DEFAULT_USERNAME,),
+        (username,),
     ).fetchone()
     now = utc_now()
 
     if not user_row:
+        password = get_default_password()
+        user_id = get_default_user_id()
+        hashed_password = hash_password(password)
         connection.execute(
             """
             INSERT INTO users (id, username, password_hash, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (DEFAULT_USER_ID, DEFAULT_USERNAME, DEFAULT_PASSWORD, now, now),
+            (user_id, username, hashed_password, now, now),
         )
-        user_id = DEFAULT_USER_ID
     else:
         user_id = user_row["id"]
 

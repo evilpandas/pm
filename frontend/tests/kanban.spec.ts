@@ -5,6 +5,7 @@ const login = async (page: import("@playwright/test").Page) => {
   await page.getByPlaceholder("username").fill("jared");
   await page.getByPlaceholder("passphrase").fill("password");
   await page.getByRole("button", { name: /sign in/i }).click();
+  await page.waitForSelector('[data-testid^="column-"]', { timeout: 10000 });
 };
 
 test("loads the kanban board after login", async ({ page }) => {
@@ -20,7 +21,7 @@ test("adds a card to a column", async ({ page }) => {
   await firstColumn.getByPlaceholder("Card title").fill("Playwright card");
   await firstColumn.getByPlaceholder("Details").fill("Added via e2e.");
   await firstColumn.getByRole("button", { name: /add card/i }).click();
-  await expect(firstColumn.getByText("Playwright card")).toBeVisible();
+  await expect(firstColumn.getByText("Playwright card").last()).toBeVisible();
 });
 
 test("moves a card between columns", async ({ page }) => {
@@ -83,5 +84,5 @@ test("edits a card after creation", async ({ page }) => {
 
   // Close modal and verify the card was updated
   await page.keyboard.press("Escape");
-  await expect(firstColumn.getByText("Playwright edited card")).toBeVisible();
+  await expect(firstColumn.getByText("Playwright edited card").last()).toBeVisible();
 });

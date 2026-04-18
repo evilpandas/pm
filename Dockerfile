@@ -25,6 +25,16 @@ RUN uv pip install --system -r /tmp/requirements.txt
 COPY backend /app/backend
 COPY --from=frontend-build /frontend/out /app/backend/static
 
+RUN addgroup --system --gid 1001 appuser && \
+    adduser --system --uid 1001 --ingroup appuser appuser && \
+    chown -R appuser:appuser /app && \
+    mkdir -p /app/.cache && \
+    chown -R appuser:appuser /app/.cache
+
+ENV UV_CACHE_DIR=/app/.cache/uv
+
+USER appuser
+
 EXPOSE 80
 
 CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "80"]

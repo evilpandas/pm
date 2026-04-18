@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KanbanBoard } from "@/components/KanbanBoard";
 
 export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authToken, setAuthToken] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -24,6 +26,8 @@ export default function Home() {
         throw new Error("Invalid credentials");
       }
 
+      const data = await response.json() as { status: string; token: string };
+      setAuthToken(data.token);
       setIsAuthenticated(true);
       setUsername("");
       setPassword("");
@@ -97,17 +101,22 @@ export default function Home() {
   }
 
   return (
-    <div className="relative">
-      <div className="absolute right-6 top-6 z-20">
-        <button
-          type="button"
-          onClick={() => setIsAuthenticated(false)}
-          className="rounded-full border border-[var(--stroke)] bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--navy-dark)] shadow-[var(--shadow)] transition hover:text-[var(--primary-blue)]"
-        >
-          Log out
-        </button>
+    <ErrorBoundary>
+      <div className="relative">
+        <div className="absolute right-6 top-6 z-20">
+          <button
+            type="button"
+            onClick={() => {
+              setIsAuthenticated(false);
+              setAuthToken("");
+            }}
+            className="rounded-full border border-[var(--stroke)] bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--navy-dark)] shadow-[var(--shadow)] transition hover:text-[var(--primary-blue)]"
+          >
+            Log out
+          </button>
+        </div>
+        <KanbanBoard authToken={authToken} />
       </div>
-      <KanbanBoard />
-    </div>
+    </ErrorBoundary>
   );
 }

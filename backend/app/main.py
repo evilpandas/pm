@@ -7,21 +7,62 @@ from pathlib import Path
 from typing import Annotated, Literal
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
-from .db import ensure_user_and_board, get_connection, init_db, utc_now
+from .auth import create_access_token, get_current_user
+from .config import settings, validate_settings
+from .db import ensure_user_and_board, get_connection, init_db, utc_now, verify_password
+from .errors import APIError, api_error_handler, http_exception_handler
+from .logging_config import log_requests, logger, setup_logging
 from .openrouter import fetch_chat_completion
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+  setup_logging()
+  logger.info("Starting application...")
+  validate_settings()
+  logger.info("Configuration validated")
   init_db()
+  logger.info("Database initialized")
   yield
+  logger.info("Shutting down application...")
 
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(APIError, api_error_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost", "http://localhost:80"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+app.middleware("http")(log_requests)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -63,6 +104,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
   status: str
+  token: str
 
 
 class ChatMessage(BaseModel):
@@ -361,178 +403,184 @@ def apply_operations(connection, board_id: str, operations: list[ChatOperation])
   if not operations:
     return
 
-  for operation in operations:
-    if isinstance(operation, CreateColumnOp):
-      column_id = uuid.uuid4().hex
-      existing_ids = fetch_column_ids(connection, board_id)
-      now = utc_now()
-      connection.execute(
-        """
-        INSERT INTO columns (id, board_id, title, position, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (column_id, board_id, operation.title, len(existing_ids), now, now),
-      )
-      insert_at = operation.position
-      next_ids = existing_ids + [column_id]
-      if insert_at is not None:
-        insert_at = max(0, min(insert_at, len(existing_ids)))
-        next_ids.pop()
-        next_ids.insert(insert_at, column_id)
-      reorder_columns(connection, board_id, next_ids)
-      continue
-
-    if isinstance(operation, RenameColumnOp):
-      now = utc_now()
-      result = connection.execute(
-        "UPDATE columns SET title = ?, updated_at = ? WHERE id = ?",
-        (operation.title, now, operation.columnId),
-      )
-      if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Column not found")
-      connection.commit()
-      continue
-
-    if isinstance(operation, MoveColumnOp):
-      ordered_ids = fetch_column_ids(connection, board_id)
-      if operation.columnId not in ordered_ids:
-        raise HTTPException(status_code=404, detail="Column not found")
-      ordered_ids.remove(operation.columnId)
-      insert_at = max(0, min(operation.position, len(ordered_ids)))
-      ordered_ids.insert(insert_at, operation.columnId)
-      reorder_columns(connection, board_id, ordered_ids)
-      continue
-
-    if isinstance(operation, DeleteColumnOp):
-      row = connection.execute(
-        "SELECT id FROM columns WHERE id = ?",
-        (operation.columnId,),
-      ).fetchone()
-      if not row:
-        raise HTTPException(status_code=404, detail="Column not found")
-      connection.execute("DELETE FROM columns WHERE id = ?", (operation.columnId,))
-      remaining_ids = fetch_column_ids(connection, board_id)
-      reorder_columns(connection, board_id, remaining_ids)
-      continue
-
-    if isinstance(operation, CreateCardOp):
-      column_row = connection.execute(
-        "SELECT id FROM columns WHERE id = ?",
-        (operation.columnId,),
-      ).fetchone()
-      if not column_row:
-        raise HTTPException(status_code=404, detail="Column not found")
-
-      now = utc_now()
-      card_id = uuid.uuid4().hex
-      existing_ids = fetch_card_ids(connection, operation.columnId)
-      connection.execute(
-        """
-        INSERT INTO cards
-          (id, column_id, title, details, position, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-          card_id,
-          operation.columnId,
-          operation.title,
-          normalize_details(operation.details),
-          len(existing_ids),
-          now,
-          now,
-        ),
-      )
-      insert_at = operation.position
-      next_ids = existing_ids + [card_id]
-      if insert_at is not None:
-        insert_at = max(0, min(insert_at, len(existing_ids)))
-        next_ids.pop()
-        next_ids.insert(insert_at, card_id)
-      reorder_cards(connection, operation.columnId, next_ids)
-      continue
-
-    if isinstance(operation, UpdateCardOp):
-      card_row = connection.execute(
-        "SELECT id FROM cards WHERE id = ?",
-        (operation.cardId,),
-      ).fetchone()
-      if not card_row:
-        raise HTTPException(status_code=404, detail="Card not found")
-
-      now = utc_now()
-      if operation.title is not None:
+  try:
+    for operation in operations:
+      if isinstance(operation, CreateColumnOp):
+        column_id = uuid.uuid4().hex
+        existing_ids = fetch_column_ids(connection, board_id)
+        now = utc_now()
         connection.execute(
-          "UPDATE cards SET title = ?, updated_at = ? WHERE id = ?",
-          (operation.title, now, operation.cardId),
+          """
+          INSERT INTO columns (id, board_id, title, position, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          """,
+          (column_id, board_id, operation.title, len(existing_ids), now, now),
         )
-      if operation.details is not None:
+        insert_at = operation.position
+        next_ids = existing_ids + [column_id]
+        if insert_at is not None:
+          insert_at = max(0, min(insert_at, len(existing_ids)))
+          next_ids.pop()
+          next_ids.insert(insert_at, column_id)
+        reorder_columns(connection, board_id, next_ids)
+        continue
+
+      if isinstance(operation, RenameColumnOp):
+        now = utc_now()
+        result = connection.execute(
+          "UPDATE columns SET title = ?, updated_at = ? WHERE id = ?",
+          (operation.title, now, operation.columnId),
+        )
+        if result.rowcount == 0:
+          raise HTTPException(status_code=404, detail="Column not found")
+        connection.commit()
+        continue
+
+      if isinstance(operation, MoveColumnOp):
+        ordered_ids = fetch_column_ids(connection, board_id)
+        if operation.columnId not in ordered_ids:
+          raise HTTPException(status_code=404, detail="Column not found")
+        ordered_ids.remove(operation.columnId)
+        insert_at = max(0, min(operation.position, len(ordered_ids)))
+        ordered_ids.insert(insert_at, operation.columnId)
+        reorder_columns(connection, board_id, ordered_ids)
+        continue
+
+      if isinstance(operation, DeleteColumnOp):
+        row = connection.execute(
+          "SELECT id FROM columns WHERE id = ?",
+          (operation.columnId,),
+        ).fetchone()
+        if not row:
+          raise HTTPException(status_code=404, detail="Column not found")
+        connection.execute("DELETE FROM columns WHERE id = ?", (operation.columnId,))
+        remaining_ids = fetch_column_ids(connection, board_id)
+        reorder_columns(connection, board_id, remaining_ids)
+        continue
+
+      if isinstance(operation, CreateCardOp):
+        column_row = connection.execute(
+          "SELECT id FROM columns WHERE id = ?",
+          (operation.columnId,),
+        ).fetchone()
+        if not column_row:
+          raise HTTPException(status_code=404, detail="Column not found")
+
+        now = utc_now()
+        card_id = uuid.uuid4().hex
+        existing_ids = fetch_card_ids(connection, operation.columnId)
         connection.execute(
-          "UPDATE cards SET details = ?, updated_at = ? WHERE id = ?",
-          (normalize_details(operation.details), now, operation.cardId),
+          """
+          INSERT INTO cards
+            (id, column_id, title, details, position, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          """,
+          (
+            card_id,
+            operation.columnId,
+            operation.title,
+            normalize_details(operation.details),
+            len(existing_ids),
+            now,
+            now,
+          ),
         )
-      connection.commit()
-      continue
+        insert_at = operation.position
+        next_ids = existing_ids + [card_id]
+        if insert_at is not None:
+          insert_at = max(0, min(insert_at, len(existing_ids)))
+          next_ids.pop()
+          next_ids.insert(insert_at, card_id)
+        reorder_cards(connection, operation.columnId, next_ids)
+        continue
 
-    if isinstance(operation, MoveCardOp):
-      card_row = connection.execute(
-        "SELECT id, column_id FROM cards WHERE id = ?",
-        (operation.cardId,),
-      ).fetchone()
-      if not card_row:
-        raise HTTPException(status_code=404, detail="Card not found")
+      if isinstance(operation, UpdateCardOp):
+        card_row = connection.execute(
+          "SELECT id FROM cards WHERE id = ?",
+          (operation.cardId,),
+        ).fetchone()
+        if not card_row:
+          raise HTTPException(status_code=404, detail="Card not found")
 
-      target_column = connection.execute(
-        "SELECT id FROM columns WHERE id = ?",
-        (operation.columnId,),
-      ).fetchone()
-      if not target_column:
-        raise HTTPException(status_code=404, detail="Target column not found")
+        now = utc_now()
+        if operation.title is not None:
+          connection.execute(
+            "UPDATE cards SET title = ?, updated_at = ? WHERE id = ?",
+            (operation.title, now, operation.cardId),
+          )
+        if operation.details is not None:
+          connection.execute(
+            "UPDATE cards SET details = ?, updated_at = ? WHERE id = ?",
+            (normalize_details(operation.details), now, operation.cardId),
+          )
+        connection.commit()
+        continue
 
-      current_column_id = card_row["column_id"]
-      now = utc_now()
+      if isinstance(operation, MoveCardOp):
+        card_row = connection.execute(
+          "SELECT id, column_id FROM cards WHERE id = ?",
+          (operation.cardId,),
+        ).fetchone()
+        if not card_row:
+          raise HTTPException(status_code=404, detail="Card not found")
 
-      park_card_position(connection, operation.cardId)
-      current_ids = fetch_card_ids(connection, current_column_id)
-      if operation.cardId in current_ids:
-        current_ids.remove(operation.cardId)
-      reorder_cards(connection, current_column_id, current_ids)
+        target_column = connection.execute(
+          "SELECT id FROM columns WHERE id = ?",
+          (operation.columnId,),
+        ).fetchone()
+        if not target_column:
+          raise HTTPException(status_code=404, detail="Target column not found")
 
-      target_ids = fetch_card_ids(connection, operation.columnId)
-      insert_at = operation.position
-      if insert_at is None:
-        insert_at = len(target_ids)
-      insert_at = max(0, min(insert_at, len(target_ids)))
-      target_ids.insert(insert_at, operation.cardId)
-      connection.execute(
-        """
-        UPDATE cards
-        SET column_id = ?, position = ?, updated_at = ?
-        WHERE id = ?
-        """,
-        (operation.columnId, -1, now, operation.cardId),
-      )
-      reorder_cards(connection, operation.columnId, target_ids)
-      continue
+        current_column_id = card_row["column_id"]
+        now = utc_now()
 
-    if isinstance(operation, DeleteCardOp):
-      row = connection.execute(
-        "SELECT id, column_id FROM cards WHERE id = ?",
-        (operation.cardId,),
-      ).fetchone()
-      if not row:
-        raise HTTPException(status_code=404, detail="Card not found")
-      connection.execute("DELETE FROM cards WHERE id = ?", (operation.cardId,))
-      remaining_ids = fetch_card_ids(connection, row["column_id"])
-      reorder_cards(connection, row["column_id"], remaining_ids)
-      continue
+        park_card_position(connection, operation.cardId)
+        current_ids = fetch_card_ids(connection, current_column_id)
+        if operation.cardId in current_ids:
+          current_ids.remove(operation.cardId)
+        reorder_cards(connection, current_column_id, current_ids)
 
-    if isinstance(operation, UpdateBoardTitleOp):
-      now = utc_now()
-      connection.execute(
-        "UPDATE boards SET title = ?, updated_at = ? WHERE id = ?",
-        (operation.title, now, board_id),
-      )
-      connection.commit()
+        target_ids = fetch_card_ids(connection, operation.columnId)
+        insert_at = operation.position
+        if insert_at is None:
+          insert_at = len(target_ids)
+        insert_at = max(0, min(insert_at, len(target_ids)))
+        target_ids.insert(insert_at, operation.cardId)
+        connection.execute(
+          """
+          UPDATE cards
+          SET column_id = ?, position = ?, updated_at = ?
+          WHERE id = ?
+          """,
+          (operation.columnId, -1, now, operation.cardId),
+        )
+        reorder_cards(connection, operation.columnId, target_ids)
+        continue
+
+      if isinstance(operation, DeleteCardOp):
+        row = connection.execute(
+          "SELECT id, column_id FROM cards WHERE id = ?",
+          (operation.cardId,),
+        ).fetchone()
+        if not row:
+          raise HTTPException(status_code=404, detail="Card not found")
+        connection.execute("DELETE FROM cards WHERE id = ?", (operation.cardId,))
+        remaining_ids = fetch_card_ids(connection, row["column_id"])
+        reorder_cards(connection, row["column_id"], remaining_ids)
+        continue
+
+      if isinstance(operation, UpdateBoardTitleOp):
+        now = utc_now()
+        connection.execute(
+          "UPDATE boards SET title = ?, updated_at = ? WHERE id = ?",
+          (operation.title, now, board_id),
+        )
+        connection.commit()
+
+    connection.commit()
+  except Exception:
+    connection.rollback()
+    raise
 
 
 def build_board(connection, board_id: str) -> BoardResponse:
@@ -604,10 +652,25 @@ def read_health() -> dict[str, str]:
 
 @app.post("/api/login", response_model=LoginResponse)
 def login(payload: LoginRequest) -> LoginResponse:
-  expected_username, expected_password = get_login_credentials()
-  if payload.username == expected_username and payload.password == expected_password:
-    return LoginResponse(status="ok")
-  raise HTTPException(status_code=401, detail="Invalid credentials")
+  connection = get_connection()
+  try:
+    ensure_user_and_board(connection)
+
+    user_row = connection.execute(
+      "SELECT id, password_hash FROM users WHERE username = ?",
+      (payload.username,),
+    ).fetchone()
+
+    if not user_row:
+      raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if not verify_password(payload.password, user_row["password_hash"]):
+      raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_access_token({"sub": payload.username})
+    return LoginResponse(status="ok", token=token)
+  finally:
+    connection.close()
 
 
 @app.get("/up", response_class=PlainTextResponse)
@@ -616,7 +679,7 @@ def read_up() -> str:
 
 
 @app.get("/api/board", response_model=BoardResponse)
-def read_board() -> BoardResponse:
+def read_board(username: str = Depends(get_current_user)) -> BoardResponse:
   connection = get_connection()
   try:
     board_id = ensure_user_and_board(connection)
@@ -626,7 +689,7 @@ def read_board() -> BoardResponse:
 
 
 @app.patch("/api/board", response_model=BoardResponse)
-def update_board(payload: BoardUpdate) -> BoardResponse:
+def update_board(payload: BoardUpdate, username: str = Depends(get_current_user)) -> BoardResponse:
   connection = get_connection()
   try:
     board_id = ensure_user_and_board(connection)
@@ -642,10 +705,14 @@ def update_board(payload: BoardUpdate) -> BoardResponse:
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest) -> ChatResponse:
+async def chat(payload: ChatRequest, username: str = Depends(get_current_user)) -> ChatResponse:
   message = payload.message.strip()
   if not message:
     raise HTTPException(status_code=400, detail="Message is required")
+  if len(message) > 1000:
+    raise HTTPException(status_code=400, detail="Message too long (max 1000 characters)")
+  if len(payload.conversation or []) > 50:
+    raise HTTPException(status_code=400, detail="Conversation too long (max 50 messages)")
   connection = get_connection()
   try:
     board_id = ensure_user_and_board(connection)
@@ -663,7 +730,7 @@ async def chat(payload: ChatRequest) -> ChatResponse:
 
 
 @app.post("/api/columns", response_model=ColumnResponse)
-def create_column(payload: ColumnCreate) -> ColumnResponse:
+def create_column(payload: ColumnCreate, username: str = Depends(get_current_user)) -> ColumnResponse:
   connection = get_connection()
   try:
     board_id = ensure_user_and_board(connection)
@@ -695,7 +762,7 @@ def create_column(payload: ColumnCreate) -> ColumnResponse:
 
 
 @app.patch("/api/columns/{column_id}", response_model=ColumnResponse)
-def update_column(column_id: str, payload: ColumnUpdate) -> ColumnResponse:
+def update_column(column_id: str, payload: ColumnUpdate, username: str = Depends(get_current_user)) -> ColumnResponse:
   connection = get_connection()
   try:
     row = connection.execute(
@@ -737,7 +804,7 @@ def update_column(column_id: str, payload: ColumnUpdate) -> ColumnResponse:
 
 
 @app.delete("/api/columns/{column_id}")
-def delete_column(column_id: str) -> dict[str, str]:
+def delete_column(column_id: str, username: str = Depends(get_current_user)) -> dict[str, str]:
   connection = get_connection()
   try:
     row = connection.execute(
@@ -756,7 +823,7 @@ def delete_column(column_id: str) -> dict[str, str]:
 
 
 @app.post("/api/cards", response_model=CardResponse)
-def create_card(payload: CardCreate) -> CardResponse:
+def create_card(payload: CardCreate, username: str = Depends(get_current_user)) -> CardResponse:
   connection = get_connection()
   try:
     column_row = connection.execute(
@@ -804,7 +871,7 @@ def create_card(payload: CardCreate) -> CardResponse:
 
 
 @app.patch("/api/cards/{card_id}", response_model=CardResponse)
-def update_card(card_id: str, payload: CardUpdate) -> CardResponse:
+def update_card(card_id: str, payload: CardUpdate, username: str = Depends(get_current_user)) -> CardResponse:
   connection = get_connection()
   try:
     card_row = connection.execute(
@@ -879,7 +946,7 @@ def update_card(card_id: str, payload: CardUpdate) -> CardResponse:
 
 
 @app.delete("/api/cards/{card_id}")
-def delete_card(card_id: str) -> dict[str, str]:
+def delete_card(card_id: str, username: str = Depends(get_current_user)) -> dict[str, str]:
   connection = get_connection()
   try:
     row = connection.execute(
