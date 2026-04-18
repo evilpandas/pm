@@ -66,13 +66,23 @@ Backend runs on uvicorn serving FastAPI app at `backend.app.main:app`
 
 ### Backend Structure
 
-- `backend/app/main.py` - FastAPI app, all API routes, request/response models, operation handlers
+**Core Application:**
+- `backend/app/main.py` - FastAPI app setup, API routes, middleware (477 lines)
+- `backend/app/models.py` - All Pydantic request/response models (164 lines)
+
+**Infrastructure:**
 - `backend/app/db.py` - SQLite schema, connection management, seed data, user/board initialization
 - `backend/app/auth.py` - JWT authentication with HTTPBearer, token creation/validation
 - `backend/app/config.py` - Pydantic Settings for centralized configuration
 - `backend/app/openrouter.py` - OpenRouter API client for AI chat completions
 - `backend/app/errors.py` - Standardized error response format
 - `backend/app/logging_config.py` - Structured logging with request/response middleware
+
+**Service Layer (backend/app/services/):**
+- `board.py` - Board building and detail normalization (77 lines)
+- `chat.py` - AI parsing, message building, JSON extraction (123 lines)
+- `operations.py` - AI operation handlers (create/update/move/delete) (221 lines)
+- `reordering.py` - Column and card reordering logic (87 lines)
 
 **Key Backend Patterns:**
 - Database initialized on startup via FastAPI lifespan context manager
@@ -86,6 +96,8 @@ Backend runs on uvicorn serving FastAPI app at `backend.app.main:app`
 - Password hashing with bcrypt before storage
 - Transaction management for multi-step database operations
 - CORS and security headers configured in middleware
+- Service layer separates business logic from route handlers
+- Models separated from main application for reusability
 
 ### Frontend Structure
 
