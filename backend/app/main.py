@@ -10,9 +10,11 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+# Rate limiting removed - should be handled at infrastructure level
+# (reverse proxy, API gateway, or cloud provider)
+# from slowapi import Limiter, _rate_limit_exceeded_handler
+# from slowapi.errors import RateLimitExceeded
+# from slowapi.util import get_remote_address
 
 from .auth import create_access_token, get_current_user
 from .config import validate_settings
@@ -60,10 +62,11 @@ async def lifespan(_: FastAPI):
     logger.info("Shutting down application...")
 
 
-limiter = Limiter(key_func=get_remote_address)
+# Rate limiting should be handled at infrastructure level
+# limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(lifespan=lifespan)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# app.state.limiter = limiter
+# app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_exception_handler(APIError, api_error_handler)
 app.add_exception_handler(HTTPException, http_exception_handler)
 

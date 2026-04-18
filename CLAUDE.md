@@ -174,6 +174,17 @@ PM_DB_PATH=               # Optional: custom database path
 
 **All endpoints except `/api/login`, `/api/health`, and `/up` require JWT authentication via `Authorization: Bearer <token>` header.**
 
+**Rate Limiting**: For production deployments, implement rate limiting at the infrastructure level using:
+- Reverse proxy (nginx `limit_req_zone`)
+- API Gateway (AWS API Gateway, Google Cloud Endpoints)
+- CDN/WAF (Cloudflare Rate Limiting)
+- Kubernetes Ingress (rate limiting annotations)
+
+Recommended limits:
+- Login: 5 requests/minute per IP
+- Chat: 10 requests/minute per user
+- CRUD operations: 60 requests/minute per user
+
 Authentication:
 - `POST /api/login` - Login with username/password, returns JWT token
 
